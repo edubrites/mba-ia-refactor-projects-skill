@@ -446,3 +446,61 @@ A skill deve atingir os seguintes mínimos em **todos os 3 projetos**:
 - **Projetos diferentes exigem adaptação** — a Fase 3 de um projeto já parcialmente organizado não vai ter as mesmas transformações de um monolito. Sua skill deve se adaptar ao contexto.
 - **Pedir confirmação na Fase 2 é obrigatório** — o humano deve revisar o relatório antes de qualquer modificação.
 - **Consulte as referências do curso** — revise a documentação oficial da ferramenta escolhida e os materiais das aulas para relembrar a estrutura e anatomia de uma skill.
+
+---
+
+# Minha Solução
+
+## Análise Manual
+
+Análise de código feita manualmente (sem a skill) nos três projetos-base, antes de qualquer decisão de design da skill. Achados ordenados por severidade, com arquivo:linha e justificativa de impacto.
+
+### Projeto 1 — code-smells-project (Python/Flask, API de E-commerce)
+
+| # | Severidade | Problema | Local |
+|---|---|---|---|
+| 1 | CRITICAL | SQL Injection generalizada — todas as queries em `models.py` são montadas por concatenação de string com dados do usuário | `models.py:28,48-50,58-60,68,92,110,127-128,140,148-166,174,188,192,196,206,220,224,239-296` |
+| 2 | CRITICAL | Endpoint `/admin/query` executa SQL arbitrário vindo do corpo da requisição, sem autenticação | `app.py:59-78` |
+| 3 | CRITICAL | Credenciais hardcoded — `SECRET_KEY` fixa e devolvida em texto claro por um endpoint público de health check | `app.py:7`, `app.py:289` |
+| 4 | CRITICAL | God File — `models.py` (315 linhas) e `controllers.py` (293 linhas) concentram SQL, regra de negócio, validação e formatação para 4 domínios (produtos, usuários, pedidos, itens_pedido) | `models.py:1-315`, `controllers.py:1-293` |
+| 5 | HIGH | Senhas armazenadas e comparadas em texto puro, sem hashing | `models.py:105-120,122-131` |
+| 6 | HIGH | Lógica de negócio (simulação de envio de e-mail/SMS/push) presa dentro do Controller, sem camada de serviço | `controllers.py:188-220` |
+| 7 | MEDIUM | Queries N+1 — cursores aninhados por pedido e por item de pedido em vez de JOIN | `models.py:171-201,203-233` |
+| 8 | MEDIUM | `debug=True` e `DEBUG=True` hardcoded, sem módulo de configuração | `app.py:8,88` |
+| 9 | LOW | `print()` como logging e concatenação de string em vez de f-strings | `controllers.py:8,11,57,61,106,161,179,182,208-210,219` |
+| 10 | LOW | Lista de categorias válidas duplicada como "magic list" solta no controller | `controllers.py:52` |
+
+**Justificativa:** os itens 1-4 comprometem segurança e integridade dos dados (SQLi + endpoint de SQL livre + segredo exposto), e a ausência total de camadas (item 4) é o exemplo mais puro de "God Class" citado no enunciado. Os itens 5-6 violam SRP/MVC ao misturar autenticação e orquestração de side-effects na camada errada. Os itens 7-10 são os problemas de padronização/performance/legibilidade que a Fase 2 também deve capturar.
+
+### Projeto 2 — ecommerce-api-legacy (Node.js/Express, LMS com checkout)
+
+| # | Severidade | Problema | Local |
+|---|---|---|---|
+| 1 | CRITICAL | Credenciais e chave de gateway de pagamento "live" hardcoded no código-fonte | `src/utils.js:2-7` |
+| 2 | CRITICAL | Hashing de senha falso (`badCrypto`): apenas concatenações de base64, sem salt, sem algoritmo real | `src/utils.js:17-23` |
+| 3 | CRITICAL | God Class `AppManager`: conexão de banco, schema, seed, todas as rotas e todo o fluxo de checkout/pagamento/matrícula/auditoria em uma única classe | `src/AppManager.js:1-142` |
+| 4 | HIGH | Callback hell — 4-5 níveis de callbacks aninhados no checkout e no relatório financeiro, sem propagação consistente de erro | `src/AppManager.js:37-77,80-129` |
+| 5 | HIGH | Deleção de usuário não remove matrículas/pagamentos associados (o próprio texto de resposta admite dado órfão) | `src/AppManager.js:131-137` |
+| 6 | MEDIUM | Queries N+1 em cascata no relatório financeiro (curso → matrículas → usuário/pagamento, tudo em loop) | `src/AppManager.js:80-129` |
+| 7 | MEDIUM | Estado global mutável (`globalCache`, `totalRevenue`) compartilhado entre todas as requisições | `src/utils.js:9-10` |
+| 8 | MEDIUM / API deprecated | Driver `sqlite3` 100% callback-based (API legada) em vez de bindings com Promise/async-await, causa raiz do callback hell | `src/AppManager.js` (todo o arquivo) |
+| 9 | LOW | Nomes de variáveis não descritivos no fluxo mais crítico do sistema (pagamento) | `src/AppManager.js:29-33` |
+| 10 | LOW | "Magic strings" de status de pagamento (`"PAID"`/`"DENIED"`) sem enum/constante | `src/AppManager.js:46,54` |
+
+**Justificativa:** itens 1-3 são falhas de segurança/arquitetura que comprometem todo o sistema de pagamento (o domínio mais sensível do projeto). Item 5 quebra integridade referencial silenciosamente. Itens 6-8 são gargalos de performance e uso de API obsoleta que a skill precisa nomear explicitamente (requisito de detecção de APIs deprecated). Itens 9-10 são ruído de legibilidade que não impede funcionamento, mas dificulta manutenção.
+
+### Projeto 3 — task-manager-api (Python/Flask, Task Manager parcialmente organizado)
+
+| # | Severidade | Problema | Local |
+|---|---|---|---|
+| 1 | CRITICAL | Credenciais hardcoded — `SECRET_KEY` da aplicação e credenciais reais de SMTP | `app.py:13`, `services/notification_service.py:9-10` |
+| 2 | HIGH | Hashing de senha com MD5 (quebrado, sem salt) | `models/user.py:27-32` |
+| 3 | HIGH | "Token" de autenticação falso (`'fake-jwt-token-' + id`), sem verificação de token em nenhuma rota | `routes/user_routes.py:207-211` |
+| 4 | MEDIUM | Queries N+1 repetidas em múltiplos endpoints (`get_tasks`, `summary_report`) | `routes/task_routes.py:41-57`, `routes/report_routes.py:53-68` |
+| 5 | MEDIUM | Lógica de "tarefa atrasada" duplicada manualmente em 4 lugares em vez de reusar `Task.is_overdue()` | `models/task.py:50-60`, `routes/task_routes.py:30-39,71-80`, `routes/user_routes.py:171-180`, `routes/report_routes.py:33-37` |
+| 6 | MEDIUM | Separação em camadas é só de nome: rotas fazem validação + orquestração + serialização diretamente, e `NotificationService` existe mas não é chamado por nenhuma rota (código morto) | `routes/task_routes.py`, `routes/user_routes.py`, `services/notification_service.py` |
+| 7 | LOW | `except:` genérico engolindo qualquer erro, sem log | `routes/task_routes.py:62-63` (e outros) |
+| 8 | LOW | Condicionais booleanos verbosos (`if cond: return True else: return False`) em vez de `return cond` | `models/task.py:38-48`, `models/user.py:34-38` |
+| 9 | LOW / API deprecated | Uso do padrão legado `Model.query.get(id)` do SQLAlchemy em quase todas as rotas, em vez de `db.session.get(Model, id)` (recomendado desde SQLAlchemy 1.4/2.0) | `routes/task_routes.py:67,158,227`, `routes/user_routes.py:29,94,136` |
+
+**Justificativa:** mesmo com pastas `models/routes/services/utils` já separadas, a organização é superficial — os problemas 1-3 são de segurança grave (equivalentes a CRITICAL/HIGH mesmo num projeto "arrumado"), e o item 6 mostra que ter uma pasta `services/` não significa que a camada de serviço é realmente usada. Este projeto valida que a skill precisa auditar responsabilidade real das camadas, não só a existência de pastas com nomes de MVC.
